@@ -50,7 +50,7 @@ def dedup_umis_directional(umi_list: list, threshold: int = 1) -> int:
 
 
 def build_count_matrix(hits_path: str, output_dir: str,
-                       umi_threshold: int = 1):
+                       umi_threshold: int = 1, umi_len: int = 12):
     """Build deduplicated count matrix from hits.npz.
 
     Input: hits.npz (binary numpy format)
@@ -89,7 +89,7 @@ def build_count_matrix(hits_path: str, output_dir: str,
     total_dedup_umis = 0
 
     for (cb_idx, guide_idx), umi_ints in cb_guide_umis.items():
-        umi_strs = [decode_umi(u) for u in umi_ints]
+        umi_strs = [decode_umi(u, umi_len) for u in umi_ints]
         raw = len(umi_strs)
         dedup = dedup_umis_directional(umi_strs, umi_threshold)
         if dedup > 0:

@@ -14,12 +14,24 @@ from .encoding import (
     generate_cb_variants,
 )
 
-# ── Read layout constants ──
-WINDOW_START = 28
-WINDOW_END   = 54
-GUIDE_LEN    = 20
-CB_START, CB_END = 0, 16
-UMI_START, UMI_END = 16, 28
+# ── Read layout constants per chemistry ──
+CHEMISTRY_CONFIGS = {
+    "10xv3": {
+        "cb_start": 0, "cb_end": 16,           # 16 bp cell barcode
+        "umi_start": 16, "umi_end": 28,         # 12 bp UMI
+        "window_start": 28, "window_end": 54,   # 26 bp guide window (R2[28:54])
+        "guide_len": 20,                         # 20 bp protospacer
+        "default_whitelist": "3M-february-2018.txt",
+    },
+    "10xv2-5p": {
+        "cb_start": 0, "cb_end": 16,            # 16 bp cell barcode
+        "umi_start": 16, "umi_end": 26,         # 10 bp UMI (5' v1)
+        "window_start": 16, "window_end": 35,   # 19 bp guide window at R2[16:35]
+        "guide_len": 19,                         # 19 bp protospacer
+        "default_whitelist": "737K-august-2016.txt",
+    },
+}
+DEFAULT_CHEMISTRY = "10xv3"
 
 
 def load_whitelist(path: str) -> set:
@@ -123,12 +135,16 @@ def _build_cb_hash_numpy(whitelist: set, cb_max_hamming: int = 2) -> dict:
 def _process_one_fastq_pair(args: tuple) -> tuple:
     """Worker: process one R1+R2 FASTQ pair, return hits array.
 
-    Args: (r1_path, r2_path, cb_hash, guide_hash_int, max_reads)
-    cb_hash may be Plan H (dict) or Plan G (numpy arrays) depending on mode.
+    Args: (r1_path, r2_path, cb_hash, guide_hash_int, max_reads, chem_cfg)
+    chem_cfg is a dict from CHEMISTRY_CONFIGS with constants for this chemistry.
     Returns: (np.ndarray shape (N,3) int32, stats_dict)
-             Columns: [cb_idx, umi_int, guide_idx]
     """
-    r1_path, r2_path, cb_hash, guide_hash_int, max_reads = args
+    r1_path, r2_path, cb_hash, guide_hash_int, max_reads, chem_cfg = args
+
+    cb_start, cb_end = chem_cfg["cb_start"], chem_cfg["cb_end"]
+    umi_start, umi_end = chem_cfg["umi_start"], chem_cfg["umi_end"]
+    win_start, win_end = chem_cfg["window_start"], chem_cfg["window_end"]
+    guide_len = chem_cfg["guide_len"]
 
     cb_mode = cb_hash['cb_mode']
     barcode_list = cb_hash['barcode_list']
@@ -164,9 +180,9 @@ def _process_one_fastq_pair(args: tuple) -> tuple:
             stats['total'] += 1
 
             # ── Step 1: CB correction ──
-            if len(seq1) < UMI_END:
+            if len(seq1) < umi_end:
                 continue
-            raw_cb_bytes = seq1[CB_START:CB_END]
+            raw_cb_bytes = seq1[cb_start:cb_end]
             if any(_BYTE2BITS[b] < 0 for b in raw_cb_bytes):
                 continue
             cb_int = encode_barcode(raw_cb_bytes.decode())
@@ -193,16 +209,17 @@ def _process_one_fastq_pair(args: tuple) -> tuple:
                 stats['cb_corrected'] += 1
 
             # ── Step 2: UMI encoding ──
-            umi_int = encode_umi_bytes(seq1, UMI_START)
+            umi_len = umi_end - umi_start
+            umi_int = encode_umi_bytes(seq1, umi_start, umi_len)
 
             # ── Step 3: Guide matching ──
-            if len(seq2) < WINDOW_END:
+            if len(seq2) < win_end:
                 stats['short_read2'] += 1
                 continue
 
-            window_bytes = seq2[WINDOW_START:WINDOW_END]
+            window_bytes = seq2[win_start:win_end]
             big_int = encode_window_bigint(window_bytes)
-            guides = extract_guides_from_bigint(big_int)
+            guides = extract_guides_from_bigint(big_int, guide_len)
 
             found_idx = -1
             # Fast path: exact match
@@ -216,12 +233,12 @@ def _process_one_fastq_pair(args: tuple) -> tuple:
             # Slow path: Hamming=1
             if found_idx < 0:
                 for offset, g in enumerate(guides):
-                    for pos in range(GUIDE_LEN):
-                        orig_bits = (g >> ((GUIDE_LEN - 1 - pos) * 2)) & 0x3
+                    for pos in range(guide_len):
+                        orig_bits = (g >> ((guide_len - 1 - pos) * 2)) & 0x3
                         for alt_bits in range(4):
                             if alt_bits == orig_bits:
                                 continue
-                            shift = (GUIDE_LEN - 1 - pos) * 2
+                            shift = (guide_len - 1 - pos) * 2
                             variant = (g & ~(0x3 << shift)) | (alt_bits << shift)
                             idx = guide_hash_int.get(variant)
                             if idx is not None:
@@ -260,9 +277,25 @@ def match_reads(
     threads: int = 1,
     low_memory: bool = False,
     cb_max_hamming: int = 2,
+    chemistry: str = "10xv3",
     report_interval: int = 1_000_000,
+    chem_cfg: Optional[dict] = None,
 ) -> dict:
-    """Core matching loop (HAM: integer encoding + numpy + multi-process I/O)."""
+    """Core matching loop (HAM: integer encoding + numpy + multi-process I/O).
+
+    When chemistry="custom", chem_cfg must be provided with keys:
+    cb_start, cb_end, umi_start, umi_end, window_start, window_end, guide_len.
+    """
+    if chemistry == "custom":
+        if not chem_cfg:
+            raise ValueError(
+                "chemistry='custom' requires a chem_cfg dict with keys: "
+                "cb_start, cb_end, umi_start, umi_end, "
+                "window_start, window_end, guide_len")
+    else:
+        chem_cfg = CHEMISTRY_CONFIGS.get(
+            chemistry, CHEMISTRY_CONFIGS[DEFAULT_CHEMISTRY])
+    mode_label = "Plan G (numpy, low-memory)" if low_memory else "Plan H (dict)"
     seq_to_idx = guide_hash['seq_to_idx']
     idx_to_id = guide_hash['idx_to_id']
 
@@ -297,7 +330,7 @@ def match_reads(
         mp.set_start_method('fork', force=True)
 
         worker_args = [
-            (r1, r2, cb_hash, guide_hash_int, max_reads)
+            (r1, r2, cb_hash, guide_hash_int, max_reads, chem_cfg)
             for r1, r2 in zip(r1_list, r2_list)
         ]
 
@@ -324,7 +357,7 @@ def match_reads(
         for r1, r2 in zip(r1_list, r2_list):
             print(f"Processing: {os.path.basename(r1)} + {os.path.basename(r2)}")
             arr, stats = _process_one_fastq_pair(
-                (r1, r2, cb_hash, guide_hash_int, max_reads))
+                (r1, r2, cb_hash, guide_hash_int, max_reads, chem_cfg))
             if arr.size > 0:
                 all_arrays.append(arr)
             for k, v in stats.items():

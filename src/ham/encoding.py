@@ -49,59 +49,95 @@ def encode_seq_bytes(b: bytes, start: int, length: int) -> int:
     return val
 
 
-def encode_umi_bytes(b: bytes, start: int) -> int:
-    """Encode 12bp UMI from bytes as uint32 (24 bits), loop-unrolled."""
+def encode_umi_bytes(b: bytes, start: int, umi_len: int = 12) -> int:
+    """Encode UMI from bytes as uint32 (2 bits/base), loop-unrolled.
+
+    For 12bp UMI (10xv3): umi_len=12 → 24 bits.
+    For 10bp UMI (10xv2-5p): umi_len=10 → 20 bits.
+    """
     v = _BYTE2BITS
-    return (v[b[start]]   << 22 | v[b[start+1]]  << 20 |
-            v[b[start+2]] << 18 | v[b[start+3]]  << 16 |
-            v[b[start+4]] << 14 | v[b[start+5]]  << 12 |
-            v[b[start+6]] << 10 | v[b[start+7]]  << 8  |
-            v[b[start+8]] << 6  | v[b[start+9]]  << 4  |
-            v[b[start+10]] << 2 | v[b[start+11]])
+    if umi_len == 12:
+        return (v[b[start]]   << 22 | v[b[start+1]]  << 20 |
+                v[b[start+2]] << 18 | v[b[start+3]]  << 16 |
+                v[b[start+4]] << 14 | v[b[start+5]]  << 12 |
+                v[b[start+6]] << 10 | v[b[start+7]]  << 8  |
+                v[b[start+8]] << 6  | v[b[start+9]]  << 4  |
+                v[b[start+10]] << 2 | v[b[start+11]])
+    elif umi_len == 10:
+        return (v[b[start]]   << 18 | v[b[start+1]]  << 16 |
+                v[b[start+2]] << 14 | v[b[start+3]]  << 12 |
+                v[b[start+4]] << 10 | v[b[start+5]]  << 8  |
+                v[b[start+6]] << 6  | v[b[start+7]]  << 4  |
+                v[b[start+8]] << 2  | v[b[start+9]])
+    else:
+        raise ValueError(f"Unsupported UMI length: {umi_len}")
 
 
-def decode_umi(val: int) -> str:
-    """Decode uint32 UMI back to 12bp string."""
+def decode_umi(val: int, umi_len: int = 12) -> str:
+    """Decode uint32 UMI back to DNA string."""
     chars = []
-    for _ in range(12):
+    for _ in range(umi_len):
         chars.append(_BITS2BASE[val & 0x3])
         val >>= 2
     return ''.join(reversed(chars))
 
 
 def encode_window_bigint(window_bytes: bytes) -> int:
-    """Encode 26bp window as a 52-bit integer (P0 optimised).
+    """Encode a DNA window as a bigint (up to 52-bit, optimised).
 
-    Uses 5x 5bp chunk LUT lookups + 1 trailing base, loop-unrolled.
+    For 26bp windows (10xv3): 5×5bp chunk LUT + 1 trailing base.
+    For 19bp windows (10xv2-5p): 3×5bp chunk LUT + 4 trailing bases.
     """
     v = _BYTE2BITS
     b = window_bytes
-    i0 = (v[b[0]]  << 8 | v[b[1]]  << 6 | v[b[2]]  << 4 |
-          v[b[3]]  << 2 | v[b[4]])
-    i1 = (v[b[5]]  << 8 | v[b[6]]  << 6 | v[b[7]]  << 4 |
-          v[b[8]]  << 2 | v[b[9]])
-    i2 = (v[b[10]] << 8 | v[b[11]] << 6 | v[b[12]] << 4 |
-          v[b[13]] << 2 | v[b[14]])
-    i3 = (v[b[15]] << 8 | v[b[16]] << 6 | v[b[17]] << 4 |
-          v[b[18]] << 2 | v[b[19]])
-    i4 = (v[b[20]] << 8 | v[b[21]] << 6 | v[b[22]] << 4 |
-          v[b[23]] << 2 | v[b[24]])
-    last = v[b[25]]
-    return (_5MER_ENC[i0] << 42 |
-            _5MER_ENC[i1] << 32 |
-            _5MER_ENC[i2] << 22 |
-            _5MER_ENC[i3] << 12 |
-            _5MER_ENC[i4] << 2  |
-            last)
+    n = len(b)
+
+    if n == 26:
+        i0 = (v[b[0]]  << 8 | v[b[1]]  << 6 | v[b[2]]  << 4 |
+              v[b[3]]  << 2 | v[b[4]])
+        i1 = (v[b[5]]  << 8 | v[b[6]]  << 6 | v[b[7]]  << 4 |
+              v[b[8]]  << 2 | v[b[9]])
+        i2 = (v[b[10]] << 8 | v[b[11]] << 6 | v[b[12]] << 4 |
+              v[b[13]] << 2 | v[b[14]])
+        i3 = (v[b[15]] << 8 | v[b[16]] << 6 | v[b[17]] << 4 |
+              v[b[18]] << 2 | v[b[19]])
+        i4 = (v[b[20]] << 8 | v[b[21]] << 6 | v[b[22]] << 4 |
+              v[b[23]] << 2 | v[b[24]])
+        last = v[b[25]]
+        return (_5MER_ENC[i0] << 42 |
+                _5MER_ENC[i1] << 32 |
+                _5MER_ENC[i2] << 22 |
+                _5MER_ENC[i3] << 12 |
+                _5MER_ENC[i4] << 2  |
+                last)
+    elif n == 19:
+        i0 = (v[b[0]]  << 8 | v[b[1]]  << 6 | v[b[2]]  << 4 |
+              v[b[3]]  << 2 | v[b[4]])
+        i1 = (v[b[5]]  << 8 | v[b[6]]  << 6 | v[b[7]]  << 4 |
+              v[b[8]]  << 2 | v[b[9]])
+        i2 = (v[b[10]] << 8 | v[b[11]] << 6 | v[b[12]] << 4 |
+              v[b[13]] << 2 | v[b[14]])
+        last4 = (v[b[15]] << 6 | v[b[16]] << 4 | v[b[17]] << 2 | v[b[18]])
+        return (_5MER_ENC[i0] << 28 |
+                _5MER_ENC[i1] << 18 |
+                _5MER_ENC[i2] << 8  |
+                last4)
+    else:
+        raise ValueError(f"Unsupported window size: {n}")
 
 
-def extract_guides_from_bigint(big_int: int) -> list:
-    """Extract 7x 20bp guide codes from a 52-bit window int via shift+mask."""
-    MASK_40 = (1 << 40) - 1
+def extract_guides_from_bigint(big_int: int, guide_len: int = 20) -> list:
+    """Extract sliding guide codes from a window int via shift+mask.
+
+    For 20bp guide in 26bp window (10xv3): offset=0..6, 7 guides.
+    For 19bp guide in 19bp window (10xv2-5p): offset=0 only, 1 guide.
+    """
+    n_offsets = 7 if guide_len == 20 else 1
+    mask = (1 << (guide_len * 2)) - 1
     guides = []
-    for offset in range(7):
-        shift = (26 - offset - 20) * 2
-        guides.append((big_int >> shift) & MASK_40)
+    for offset in range(n_offsets):
+        shift = ((n_offsets + guide_len - 1 - offset) * 2) if guide_len == 20 else 0
+        guides.append((big_int >> shift) & mask)
     return guides
 
 

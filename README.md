@@ -31,6 +31,34 @@ ham dedup -i hits.npz -o mex_output/
 ham merge --lanes lane_list.tsv --out merged/ --prefix merged
 ```
 
+### Supported 10x Chemistries
+
+HAM supports two named 10x chemistries plus a `custom` escape hatch for
+non-standard hardware:
+
+| Chemistry | R1 geometry | UMI | R2 guide layout | Default whitelist |
+|-----------|:---:|:---:|:---|:---|
+| `10xv3` (default) | 28bp (16CB + 12UMI) | 12bp | pos 28-54, 20bp guide | 3M-february-2018 |
+| `10xv2-5p` | 26bp (16CB + 10UMI) | 10bp | pos 16-35, 19bp guide | 737K-august-2016 |
+| `custom` | user-defined | user-defined | user-defined | user-provided |
+
+```bash
+# Standard chemistries
+ham match ... --chemistry 10xv3        # 3' v3/v4, 5' v3, multiome
+ham match ... --chemistry 10xv2-5p     # 5' v1/v2
+
+# Custom chemistry — pass each position explicitly
+ham match ... --chemistry custom \
+    --cb-start 0 --cb-end 14 \
+    --umi-start 14 --umi-end 22 \
+    --window-start 8 --window-end 28 \
+    --guide-len 20
+```
+
+All hardcoded constants (window positions, UMI length, guide length, whitelist
+name) are resolved from the chemistry selection.  The `ham build-hash` and
+`ham dedup` stages are chemistry-independent and do not need the flag.
+
 ### Python API
 
 ```python
@@ -40,10 +68,23 @@ from ham.dedup import build_count_matrix
 
 guide_hash = build_guide_hash("guides.fasta", "guide_hash.pkl")
 whitelist = load_whitelist("whitelist.txt")
-match_reads("-1", "lane01_R1.fastq.gz", "-2", "lane01_R2.fastq.gz",
+match_reads("lane01_R1.fastq.gz", "lane01_R2.fastq.gz",
             whitelist=whitelist, guide_hash=guide_hash,
-            output_path="hits.npz", threads=4)
-build_count_matrix("hits.npz", "mex_output/")
+            output_path="hits.npz", threads=4, chemistry="10xv3")
+build_count_matrix("hits.npz", "mex_output/", umi_len=12)
+
+# Custom chemistry via Python API
+match_reads("lane01_R1.fastq.gz", "lane01_R2.fastq.gz",
+            whitelist=whitelist, guide_hash=guide_hash,
+            output_path="hits.npz", threads=4,
+            chemistry="custom",
+            chem_cfg={
+                "cb_start": 0, "cb_end": 14,
+                "umi_start": 14, "umi_end": 22,
+                "window_start": 8, "window_end": 28,
+                "guide_len": 20,
+            })
+build_count_matrix("hits.npz", "mex_output/", umi_len=8)
 ```
 
 ### Expected Throughput
@@ -130,11 +171,25 @@ During matching, the 16 bp barcode at Read1[0:16] is encoded as a `uint32` and l
 
 #### Step 1c: UMI Encoding
 
-The 12 bp UMI at Read1[16:28] is encoded as a `uint32` using a loop-unrolled, 12-element LUT lookup — each byte is converted via `_BYTE2BITS` and shifted into position. The encoded UMI is stored in the hits array; string decoding is deferred to the deduplication stage.
+The UMI region (12 bp at Read1[16:28] for `10xv3`; 10 bp at Read1[16:26] for
+`10xv2-5p`; user-specified for `custom`) is encoded as a `uint32` using a
+LUT lookup — each byte is converted via `_BYTE2BITS` and shifted into
+position. The encoded UMI is stored in the hits array; string decoding is
+deferred to the deduplication stage.
 
 #### Step 1d: Window-Restricted Guide Extraction
 
-The critical design decision: **only positions 28–54 of Read2 are examined.** This window is anchored against the known 10x sgRNA construct layout:
+The critical design decision: **only a specific window of Read2 is examined,**
+anchored against the known 10x sgRNA construct layout. Window positions depend
+on chemistry:
+
+| Chemistry | R2 window | Guide length |
+|:---|:---|:---:|
+| `10xv3` (3' v3) | positions 28–54 | 20 bp |
+| `10xv2-5p` (5' v1/v2) | positions 16–35 | 19 bp |
+| `custom` | user-specified | user-specified |
+
+Example for `10xv3`:
 
 ```
 Read2 layout (3' v3 chemistry, sgRNA library):
@@ -179,7 +234,9 @@ When multiple FASTQ pairs are provided (comma-separated lists to `-1` and `-2`),
 
 #### Step 2a: Grouping
 
-Hits are grouped by `(cell_barcode_idx, guide_idx)`. Each group contains a list of encoded UMI integers for that (cell, guide) pair. The encoded UMIs are decoded to 12 bp strings via `decode_umi()` (reverse of the loop-unrolled LUT encoding).
+Hits are grouped by `(cell_barcode_idx, guide_idx)`. Each group contains a list of encoded UMI integers for that (cell, guide) pair.
+The encoded UMIs are decoded to strings via `decode_umi()` (reverse of the
+LUT encoding), using the chemistry-appropriate UMI length.
 
 #### Step 2b: UMI-tools Directional Deduplication
 
@@ -245,11 +302,22 @@ ham match           Match sgRNA reads to guide reference
   -t, --threads N     Parallel workers (one per FASTQ pair) [default: 1]
   --low-memory        Use numpy binary-search CB hash (~110 MB vs ~700 MB)
   --cb-max-hamming N  Max Hamming distance for CB correction [default: 1]
+  --chemistry NAME    10x chemistry: 10xv3, 10xv2-5p, or custom [default: 10xv3]
+
+  # Custom chemistry flags (used with --chemistry custom):
+  --cb-start N        CB start position in R1 [default: 0]
+  --cb-end N          CB end position in R1 [default: 16]
+  --umi-start N       UMI start position in R1 [default: 16]
+  --umi-end N         UMI end position in R1 [default: 28]
+  --window-start N    Guide window start in R2 [default: 28]
+  --window-end N      Guide window end in R2 [default: 54]
+  --guide-len N       Guide protospacer length in bp [default: 20]
 
 ham dedup           UMI deduplication + MEX matrix generation
   -i, --input PATH    Hits file (.npz) from ham match
   -o, --output-dir PATH  Output directory for MEX files
   -t, --umi-threshold N  UMI Hamming distance threshold [default: 1]
+  --umi-len N         UMI length in bp (12 for v3, 10 for 5' v1) [default: 12]
 
 ham merge           Merge per-lane count matrices
   --lanes PATH        Lane list TSV: lane_id, matrix_dir, suffix

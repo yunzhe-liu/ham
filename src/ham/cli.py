@@ -18,6 +18,20 @@ def cmd_match(args):
     """Match sgRNA reads to guide reference."""
     wl = load_whitelist(args.whitelist)
     gh = load_guide_hash(args.guide_hash)
+
+    # Build custom chem_cfg kwargs when --chemistry custom
+    match_kwargs = {}
+    if args.chemistry == "custom":
+        match_kwargs["chem_cfg"] = {
+            "cb_start": args.cb_start,
+            "cb_end": args.cb_end,
+            "umi_start": args.umi_start,
+            "umi_end": args.umi_end,
+            "window_start": args.window_start,
+            "window_end": args.window_end,
+            "guide_len": args.guide_len,
+        }
+
     match_reads(
         r1_path=args.read1,
         r2_path=args.read2,
@@ -28,6 +42,8 @@ def cmd_match(args):
         threads=args.threads,
         low_memory=args.low_memory,
         cb_max_hamming=args.cb_max_hamming,
+        chemistry=args.chemistry,
+        **match_kwargs,
     )
 
 
@@ -37,6 +53,7 @@ def cmd_dedup(args):
         hits_path=args.input,
         output_dir=args.output_dir,
         umi_threshold=args.umi_threshold,
+        umi_len=args.umi_len,
     )
 
 
@@ -85,6 +102,27 @@ def main():
                          help='Max Hamming distance for CB correction '
                               '(default: 1; use 2 if whitelist chemistry '
                               'differs from sequencing chemistry)')
+    p_match.add_argument('--chemistry', type=str, default='10xv3',
+                         choices=['10xv3', '10xv2-5p', 'custom'],
+                         help='10x chemistry: 10xv3 (3-prime, 12bp UMI), '
+                              '10xv2-5p (5-prime v1, 10bp UMI), '
+                              'or custom (use --cb-start/--umi-start/etc.) '
+                              '[default: 10xv3]')
+    # Custom chemistry flags (used when --chemistry custom)
+    p_match.add_argument('--cb-start', type=int, default=0,
+                         help='CB start position in R1 [default: 0]')
+    p_match.add_argument('--cb-end', type=int, default=16,
+                         help='CB end position in R1 [default: 16]')
+    p_match.add_argument('--umi-start', type=int, default=16,
+                         help='UMI start position in R1 [default: 16]')
+    p_match.add_argument('--umi-end', type=int, default=28,
+                         help='UMI end position in R1 [default: 28]')
+    p_match.add_argument('--window-start', type=int, default=28,
+                         help='Guide window start in R2 [default: 28]')
+    p_match.add_argument('--window-end', type=int, default=54,
+                         help='Guide window end in R2 [default: 54]')
+    p_match.add_argument('--guide-len', type=int, default=20,
+                         help='Guide protospacer length in bp [default: 20]')
     p_match.set_defaults(func=cmd_match)
 
     # ── dedup ──
@@ -95,6 +133,8 @@ def main():
                          help='Output directory for MEX files')
     p_dedup.add_argument('-t', '--umi-threshold', type=int, default=1,
                          help='UMI Hamming distance threshold (default: 1)')
+    p_dedup.add_argument('--umi-len', type=int, default=12,
+                         help='UMI length in bp (12 for v3, 10 for 5prime v1)')
     p_dedup.set_defaults(func=cmd_dedup)
 
     # ── merge ──
