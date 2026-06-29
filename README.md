@@ -7,7 +7,7 @@ eliminating adapter-derived false-positive matches. It processes raw FASTQ pairs
 and produces deduplicated MEX count matrices — directly comparable to existing
 tools (simpleaf, Cell Ranger) but faster and more accurate at the per-cell level.
 
-HAM is also embedded in the [sgprocess](https://github.com/yunzhe-liu/sgprocess)
+HAM is also embedded in the [scprocess-perturb](https://github.com/yunzhe-liu/scprocess-perturb)
 Snakemake workflow, which provides a unified chemistry-configuration layer and
 orchestrates the full guide-extraction pipeline.
 
