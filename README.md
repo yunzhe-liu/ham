@@ -53,19 +53,21 @@ point and importable Python modules (`ham.matcher`, `ham.dedup`, `ham.merge`,
 
 ## Supported 10x Chemistries
 
-HAM supports two named chemistries plus a `custom` escape hatch. All physical
+HAM supports three named chemistries plus a `custom` escape hatch. All physical
 read-layout parameters are resolved from the chemistry selection.
 
 | Chemistry | Matches these 10x kits | R1 layout | UMI | R2 guide window | Guide length | Default whitelist |
 |:---|:---|:---|:---:|:---|:---:|:---|
-| `10xv3` (default) | 3' v3/v3.1/v4, 5' v3, Multiome | 28bp (16CB+12UMI) | 12bp | pos 28–54 | 20bp | 3M-february-2018 |
-| `10xv2-5p` | 5' v1.0, 5' v2 | 26bp (16CB+10UMI) | 10bp | pos 16–35 | 19bp | 737K-august-2016 |
+| `10xv3` (default) | 3' v3/v3.1/v4, 3LT, Multiome | 28bp (16CB+12UMI) | 12bp | pos 28–54 | 20bp | 3M-feb-2018 / 3M-3pgex-may-2023 |
+| `10xv2-5p` | 5' v1.0, 5' v2 | 26bp (16CB+10UMI) | 10bp | pos 16–35 | 19bp | 737K-aug-2016 |
+| `10xv2-5p-12umi` | 5' v3 (GEM-X) | 28bp (16CB+12UMI) | 12bp | pos 16–35 | 19bp | 3M-5pgex-jan-2023 |
 | `custom` | Any non-standard hardware | user-defined | user-defined | user-defined | user-defined | user-provided |
 
 ```bash
 # Standard chemistries
-ham match ... --chemistry 10xv3        # 3' v3/v4, 5' v3, multiome
-ham match ... --chemistry 10xv2-5p     # 5' v1/v2
+ham match ... --chemistry 10xv3            # 3' v3/v4, 3LT, multiome
+ham match ... --chemistry 10xv2-5p         # 5' v1/v2
+ham match ... --chemistry 10xv2-5p-12umi   # 5' v3 (GEM-X)
 
 # Custom chemistry — pass each position explicitly
 ham match ... --chemistry custom \

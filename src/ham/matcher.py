@@ -25,10 +25,17 @@ CHEMISTRY_CONFIGS = {
     },
     "10xv2-5p": {
         "cb_start": 0, "cb_end": 16,            # 16 bp cell barcode
-        "umi_start": 16, "umi_end": 26,         # 10 bp UMI (5' v1)
+        "umi_start": 16, "umi_end": 26,         # 10 bp UMI (5' v1/v2)
         "window_start": 16, "window_end": 35,   # 19 bp guide window at R2[16:35]
         "guide_len": 19,                         # 19 bp protospacer
         "default_whitelist": "737K-august-2016.txt",
+    },
+    "10xv2-5p-12umi": {
+        "cb_start": 0, "cb_end": 16,            # 16 bp cell barcode
+        "umi_start": 16, "umi_end": 28,         # 12 bp UMI (5' v3, GEM-X)
+        "window_start": 16, "window_end": 35,   # 19 bp guide window at R2[16:35]
+        "guide_len": 19,                         # 19 bp protospacer
+        "default_whitelist": "3M-5pgex-jan-2023.txt",
     },
 }
 DEFAULT_CHEMISTRY = "10xv3"

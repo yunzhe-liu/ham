@@ -103,9 +103,10 @@ def main():
                               '(default: 1; use 2 if whitelist chemistry '
                               'differs from sequencing chemistry)')
     p_match.add_argument('--chemistry', type=str, default='10xv3',
-                         choices=['10xv3', '10xv2-5p', 'custom'],
+                         choices=['10xv3', '10xv2-5p', '10xv2-5p-12umi', 'custom'],
                          help='10x chemistry: 10xv3 (3-prime, 12bp UMI), '
-                              '10xv2-5p (5-prime v1, 10bp UMI), '
+                              '10xv2-5p (5-prime v1/v2, 10bp UMI), '
+                              '10xv2-5p-12umi (5-prime v3 GEM-X, 12bp UMI), '
                               'or custom (use --cb-start/--umi-start/etc.) '
                               '[default: 10xv3]')
     # Custom chemistry flags (used when --chemistry custom)
