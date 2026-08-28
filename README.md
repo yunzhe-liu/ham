@@ -58,10 +58,22 @@ read-layout parameters are resolved from the chemistry selection.
 
 | Chemistry | Matches these 10x kits | R1 layout | UMI | R2 guide window | Guide length | Default whitelist |
 |:---|:---|:---|:---:|:---|:---:|:---|
-| `10xv3` (default) | 3' v3/v3.1/v4, 3LT, Multiome | 28bp (16CB+12UMI) | 12bp | pos 28–54 | 20bp | 3M-feb-2018 / 3M-3pgex-may-2023 |
-| `10xv2-5p` | 5' v1.0, 5' v2 | 26bp (16CB+10UMI) | 10bp | pos 16–35 | 19bp | 737K-aug-2016 |
-| `10xv2-5p-12umi` | 5' v3 (GEM-X) | 28bp (16CB+12UMI) | 12bp | pos 16–35 | 19bp | 3M-5pgex-jan-2023 |
+| `10xv3` (default) | 3' v3/v3.1/v4, 3LT, Multiome | 28bp (16CB+12UMI) | 12bp | pos 28–54 (26bp, ±3bp margin around the 20bp guide) | 20bp | 3M-feb-2018 / 3M-3pgex-may-2023 |
+| `10xv2-5p` | 5' v1.0, 5' v2 | 26bp (16CB+10UMI) | 10bp | pos 13–39 (26bp, ±3bp margin around the 20bp guide) | 20bp | 737K-aug-2016 |
+| `10xv2-5p-12umi` | 5' v3 (GEM-X) | 28bp (16CB+12UMI) | 12bp | pos 13–39 (26bp, ±3bp margin around the 20bp guide) | 20bp | 3M-5pgex-jan-2023 |
 | `custom` | Any non-standard hardware | user-defined | user-defined | user-defined | user-defined | user-provided |
+
+The guide anchor position within R2 (position 16 for the 5' chemistries,
+position 28 for `10xv3`) is validated against real data for each
+chemistry — it is not derived from a generic construct diagram. Guide
+length is 20bp for all three named chemistries (standard SpCas9
+protospacer length; the 5' chemistries previously used an incorrect 19bp
+with zero margin). All three windows now carry a ±3bp margin around their
+validated anchor (`window_len - guide_len + 1` = 7 candidate offsets are
+scanned automatically). If your own library prep puts the guide somewhere
+else in R2 entirely, don't assume a named chemistry fits — use
+`--chemistry custom` with your own `--window-start`/`--window-end`/
+`--guide-len` instead.
 
 ```bash
 # Standard chemistries
@@ -214,11 +226,11 @@ as a `uint32`. Decoding is deferred to the deduplication stage.
 **Step 1d — Window-Restricted Guide Extraction:** Only a specific window of
 Read2 is examined, anchored against the known construct layout:
 
-| Chemistry | R2 window | Guide length |
-|:---|:---|:---:|
-| `10xv3` (3' v3) | positions 28–54 | 20 bp |
-| `10xv2-5p` (5' v1/v2) | positions 16–35 | 19 bp |
-| `custom` | user-specified | user-specified |
+| Chemistry | R2 window | Guide length | Margin / offsets |
+|:---|:---|:---:|:---|
+| `10xv3` (3' v3) | positions 28–54 | 20 bp | ±3bp, 7 offsets |
+| `10xv2-5p` / `10xv2-5p-12umi` (5') | positions 13–39 | 20 bp | ±3bp, 7 offsets |
+| `custom` | user-specified | user-specified | `window_len - guide_len + 1` offsets |
 
 Example for `10xv3`:
 ```
@@ -230,9 +242,18 @@ Read2 layout (3' v3 chemistry, sgRNA library):
   [54:90]  — poly-A tail remainder (discarded)
 ```
 
-The window is encoded as a 52-bit integer. Seven sliding sub-windows are
-extracted via bit-shift-and-mask operations. Each candidate is checked
-against `guide_hash_int`:
+The guide anchor within each window (position 28 for `10xv3`, position 16
+for the 5' chemistries) is the validated real-data position, not derived
+from a generic construct diagram; the ±3bp margin around it is a
+positional-drift tolerance, matching `10xv3`'s. If your own library prep
+puts the guide somewhere else in R2 entirely, use `--chemistry custom`
+with your own `--window-start`/`--window-end`/`--guide-len` rather than
+assuming a named chemistry fits — see "Supported 10x Chemistries" above.
+
+The window is encoded as a big integer (2 bits/base). `window_len - guide_len
++ 1` sliding sub-windows are extracted via bit-shift-and-mask operations —
+7 for all three named chemistries, given their current ±3bp margins. Each
+candidate is checked against `guide_hash_int`:
 - **Fast path (exact match):** O(1) dict lookup. Handles >99% of guide matches.
 - **Slow path (Hamming=1):** Generates 60 Hamming-1 variants on-the-fly for
   the ~1% of reads with a sequencing error (60 × O(1) = constant overhead).
@@ -242,7 +263,7 @@ against `guide_hash_int`:
 parallel. The guide hash and CB hash are shared read-only via `fork()`
 copy-on-write.
 
-### Stage 2: `dedup` — UMI Directional Deduplication + MEX Generation
+### Stage 2: `dedup` — UMI Deduplication + MEX Generation
 
 **Input:** `hits.npz` from the match stage.
 
@@ -251,9 +272,15 @@ copy-on-write.
 
 Hits are grouped by `(cell_barcode_idx, guide_idx)`. Encoded UMIs are decoded
 to strings with the chemistry-appropriate UMI length. For each group, UMIs are
-deduplicated using the **UMI-tools directional algorithm** with a
-hash-accelerated implementation: each retained UMI's 36 Hamming-1 variants are
-inserted into a local hash set (O(1) lookup instead of O(n × m) linear scan).
+deduplicated with a **hash-accelerated greedy count-ranked dedup**: UMIs are
+visited in descending count order, and a UMI is retained unless it (or an
+exact match) was already claimed by a higher-count UMI within the Hamming
+threshold — claiming is done by inserting each retained UMI's 36 Hamming-1
+variants into a local hash set (O(1) lookup instead of O(n × m) linear scan).
+This is *not* the UMI-tools "directional" algorithm (which merges based on a
+count-ratio condition over a UMI adjacency graph) and can produce different
+counts from it, particularly at high UMI diversity/depth — treat it as its
+own well-defined method, not a drop-in equivalent of UMI-tools directional.
 
 Deduplicated counts are assembled into a `scipy.sparse.csr_matrix` and written
 as a gzip-compressed MEX file.

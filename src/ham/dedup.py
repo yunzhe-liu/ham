@@ -11,11 +11,22 @@ from .encoding import decode_umi
 
 
 def dedup_umis_directional(umi_list: list, threshold: int = 1) -> int:
-    """Hash-accelerated directional UMI dedup (UMI-tools algorithm).
+    """Hash-accelerated greedy UMI dedup.
 
-    Mathematically identical to UMI-tools directional.
-    Replaces O(n x m) linear scan with O(n x 36) hash operations
-    (12 bp UMI × 3 alternative bases).
+    Visits UMIs in descending count order; a UMI is retained unless it (or
+    an exact match) was already claimed by a higher-count UMI within
+    Hamming distance `threshold`. Claiming is done by inserting each
+    retained UMI's Hamming<=threshold neighbours into a local hash set, so
+    each lookup is O(1) instead of the O(n x m) pairwise scan a naive
+    implementation would need.
+
+    Note: this is NOT the same as the UMI-tools "directional" algorithm,
+    which builds a directed graph over UMI pairs and only merges an edge
+    when the count ratio satisfies count[a] >= 2*count[b]-1. This function
+    is a simpler count-ranked greedy collapse and can produce different
+    dedup counts than true UMI-tools directional, particularly at high UMI
+    diversity/depth. Do not change this function's behaviour without
+    updating every downstream consumer that assumes today's output.
 
     Returns number of retained UMIs after deduplication.
     """

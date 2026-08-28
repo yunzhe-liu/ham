@@ -26,19 +26,58 @@ CHEMISTRY_CONFIGS = {
     "10xv2-5p": {
         "cb_start": 0, "cb_end": 16,            # 16 bp cell barcode
         "umi_start": 16, "umi_end": 26,         # 10 bp UMI (5' v1/v2)
-        "window_start": 16, "window_end": 35,   # 19 bp guide window at R2[16:35]
-        "guide_len": 19,                         # 19 bp protospacer
+        # Guide anchor validated at R2 position 16 (originally shipped as
+        # a 19bp window == guide_len there); guide_len corrected to 20bp
+        # (standard SpCas9 protospacer length) with +/-3bp margin added on
+        # each side, mirroring 10xv3's tolerance. Window = 16-3 .. 16+20+3.
+        "window_start": 13, "window_end": 39,   # 26 bp guide window at R2[13:39]
+        "guide_len": 20,                         # 20 bp protospacer, +/-3bp margin (7 offsets)
         "default_whitelist": "737K-august-2016.txt",
     },
     "10xv2-5p-12umi": {
         "cb_start": 0, "cb_end": 16,            # 16 bp cell barcode
         "umi_start": 16, "umi_end": 28,         # 12 bp UMI (5' v3, GEM-X)
-        "window_start": 16, "window_end": 35,   # 19 bp guide window at R2[16:35]
-        "guide_len": 19,                         # 19 bp protospacer
+        "window_start": 13, "window_end": 39,   # 26 bp guide window at R2[13:39]
+        "guide_len": 20,                         # 20 bp protospacer, +/-3bp margin (7 offsets)
         "default_whitelist": "3M-5pgex-jan-2023.txt",
     },
 }
 DEFAULT_CHEMISTRY = "10xv3"
+
+_CHEM_CFG_KEYS = ("cb_start", "cb_end", "umi_start", "umi_end",
+                  "window_start", "window_end", "guide_len")
+
+
+def _validate_chem_cfg(chem_cfg: dict, source: str) -> None:
+    """Validate a chemistry config dict (named or custom) before matching.
+
+    `source` is used only for error messages (e.g. "chemistry='custom'" or
+    "chemistry='10xv3'") so a bad named-chemistry config is reported the
+    same way a bad custom config would be.
+    """
+    missing = [k for k in _CHEM_CFG_KEYS if k not in chem_cfg]
+    if missing:
+        raise ValueError(f"{source}: chem_cfg missing keys: {missing}")
+
+    cb_start, cb_end = chem_cfg["cb_start"], chem_cfg["cb_end"]
+    umi_start, umi_end = chem_cfg["umi_start"], chem_cfg["umi_end"]
+    win_start, win_end = chem_cfg["window_start"], chem_cfg["window_end"]
+    guide_len = chem_cfg["guide_len"]
+
+    if cb_end <= cb_start:
+        raise ValueError(f"{source}: cb_end ({cb_end}) must be > cb_start ({cb_start})")
+    if umi_end <= umi_start:
+        raise ValueError(f"{source}: umi_end ({umi_end}) must be > umi_start ({umi_start})")
+    if win_end <= win_start:
+        raise ValueError(f"{source}: window_end ({win_end}) must be > window_start ({win_start})")
+    if guide_len <= 0:
+        raise ValueError(f"{source}: guide_len ({guide_len}) must be > 0")
+    window_len = win_end - win_start
+    if window_len < guide_len:
+        raise ValueError(
+            f"{source}: window ({window_len}bp, R2[{win_start}:{win_end}]) "
+            f"is shorter than guide_len ({guide_len}bp) — no candidate offset "
+            f"can ever match")
 
 
 def load_whitelist(path: str) -> set:
@@ -161,8 +200,8 @@ def _process_one_fastq_pair(args: tuple) -> tuple:
         cb_keys = cb_hash['cb_keys']
         cb_vals = cb_hash['cb_vals']
 
-    MAX_ESTIMATE = 30_000_000
-    hits = np.zeros((MAX_ESTIMATE, 3), dtype=np.int32)
+    INITIAL_CAPACITY = 1_000_000
+    hits = np.zeros((INITIAL_CAPACITY, 3), dtype=np.int32)
     write_ptr = 0
 
     stats = {'total': 0, 'valid_cb': 0, 'cb_exact': 0, 'cb_corrected': 0,
@@ -172,15 +211,25 @@ def _process_one_fastq_pair(args: tuple) -> tuple:
     opener = gzip.open if r1_path.endswith('.gz') else open
     with opener(r1_path, 'rb') as f1, opener(r2_path, 'rb') as f2:
         while True:
-            # Read1 record
             h1 = f1.readline()
-            if not h1: break
+            h2 = f2.readline()
+            if not h1 and not h2:
+                break
+            if not h1 or not h2:
+                raise ValueError(
+                    f"FASTQ record count mismatch between R1 ({r1_path}) and "
+                    f"R2 ({r2_path}) at read #{stats['total'] + 1}: one file "
+                    f"ended before the other")
+            if not h1.startswith(b'@') or not h2.startswith(b'@'):
+                bad_path = r1_path if not h1.startswith(b'@') else r2_path
+                bad_line = h1 if not h1.startswith(b'@') else h2
+                raise ValueError(
+                    f"Malformed FASTQ in {bad_path} at read #{stats['total'] + 1}: "
+                    f"expected a '@' header line, got {bad_line[:40]!r} — file may "
+                    f"be truncated, corrupt, or out of frame")
+
             seq1 = f1.readline().strip()
             f1.readline(); f1.readline()
-
-            # Read2 record
-            h2 = f2.readline()
-            if not h2: break
             seq2 = f2.readline().strip()
             f2.readline(); f2.readline()
 
@@ -226,7 +275,7 @@ def _process_one_fastq_pair(args: tuple) -> tuple:
 
             window_bytes = seq2[win_start:win_end]
             big_int = encode_window_bigint(window_bytes)
-            guides = extract_guides_from_bigint(big_int, guide_len)
+            guides = extract_guides_from_bigint(big_int, guide_len, win_end - win_start)
 
             found_idx = -1
             # Fast path: exact match
@@ -259,6 +308,13 @@ def _process_one_fastq_pair(args: tuple) -> tuple:
 
             if found_idx >= 0:
                 stats['matched'] += 1
+                if write_ptr >= hits.shape[0]:
+                    # Amortized-doubling growth — avoids both a hard cap on
+                    # the number of hits a single FASTQ pair can produce and
+                    # per-row reallocation cost.
+                    grown = np.zeros((hits.shape[0] * 2, 3), dtype=np.int32)
+                    grown[:write_ptr] = hits[:write_ptr]
+                    hits = grown
                 hits[write_ptr, 0] = cb_idx
                 hits[write_ptr, 1] = umi_int
                 hits[write_ptr, 2] = found_idx
@@ -302,6 +358,15 @@ def match_reads(
     else:
         chem_cfg = CHEMISTRY_CONFIGS.get(
             chemistry, CHEMISTRY_CONFIGS[DEFAULT_CHEMISTRY])
+    _validate_chem_cfg(chem_cfg, source=f"chemistry={chemistry!r}")
+
+    guide_length = guide_hash.get('guide_length')
+    if guide_length is not None and guide_length != chem_cfg["guide_len"]:
+        print(f"WARNING: chem_cfg guide_len ({chem_cfg['guide_len']}) does not "
+              f"match guide_hash guide_length ({guide_length}) — guides.fasta "
+              f"and --guide-len/chemistry appear to disagree; matching will "
+              f"likely produce near-zero hits.")
+
     mode_label = "Plan G (numpy, low-memory)" if low_memory else "Plan H (dict)"
     seq_to_idx = guide_hash['seq_to_idx']
     idx_to_id = guide_hash['idx_to_id']
@@ -324,8 +389,12 @@ def match_reads(
     # Split FASTQ paths
     r1_list = [p.strip() for p in r1_path.split(',') if p.strip()]
     r2_list = [p.strip() for p in r2_path.split(',') if p.strip()]
-    assert len(r1_list) == len(r2_list), \
-        f"Mismatched R1/R2 file counts: {len(r1_list)} vs {len(r2_list)}"
+    if len(r1_list) != len(r2_list):
+        raise ValueError(
+            f"Mismatched R1/R2 file counts: {len(r1_list)} vs {len(r2_list)}")
+    missing = [p for p in r1_list + r2_list if not os.path.isfile(p)]
+    if missing:
+        raise FileNotFoundError(f"FASTQ file(s) not found: {missing}")
 
     n_files = len(r1_list)
     use_mp = threads > 1 and n_files > 1
@@ -334,7 +403,6 @@ def match_reads(
 
     if use_mp:
         import multiprocessing as mp
-        mp.set_start_method('fork', force=True)
 
         worker_args = [
             (r1, r2, cb_hash, guide_hash_int, max_reads, chem_cfg)
@@ -343,7 +411,13 @@ def match_reads(
 
         print(f"Processing {n_files} FASTQ pairs with "
               f"{min(threads, n_files)} workers...")
-        with mp.Pool(processes=min(threads, n_files)) as pool:
+        # Use a fork-context Pool explicitly (relies on copy-on-write to
+        # share cb_hash/guide_hash_int read-only) without touching the
+        # process-wide multiprocessing start method — calling
+        # mp.set_start_method(force=True) here would silently override
+        # whatever start method the calling process/library already set.
+        ctx = mp.get_context('fork')
+        with ctx.Pool(processes=min(threads, n_files)) as pool:
             results = pool.map(_process_one_fastq_pair, worker_args)
 
         all_arrays = []

@@ -83,60 +83,48 @@ def decode_umi(val: int, umi_len: int = 12) -> str:
 
 
 def encode_window_bigint(window_bytes: bytes) -> int:
-    """Encode a DNA window as a bigint (up to 52-bit, optimised).
+    """Encode a DNA window of arbitrary length as a big integer (2 bits/base,
+    MSB-first — i.e. window_bytes[0] occupies the highest-order bits).
 
-    For 26bp windows (10xv3): 5×5bp chunk LUT + 1 trailing base.
-    For 19bp windows (10xv2-5p): 3×5bp chunk LUT + 4 trailing bases.
+    Processes complete 5bp chunks via the 5-mer LUT (fast path, same
+    bit-packing as the original 26bp/19bp hand-unrolled implementation) and
+    any remaining <5 trailing bases one at a time. For n divisible by 5 this
+    is exactly the old "N x 5bp chunk" code; for the historical 26bp and
+    19bp window sizes the output is bit-for-bit identical to the previous
+    hardcoded branches.
     """
     v = _BYTE2BITS
     b = window_bytes
     n = len(b)
 
-    if n == 26:
-        i0 = (v[b[0]]  << 8 | v[b[1]]  << 6 | v[b[2]]  << 4 |
-              v[b[3]]  << 2 | v[b[4]])
-        i1 = (v[b[5]]  << 8 | v[b[6]]  << 6 | v[b[7]]  << 4 |
-              v[b[8]]  << 2 | v[b[9]])
-        i2 = (v[b[10]] << 8 | v[b[11]] << 6 | v[b[12]] << 4 |
-              v[b[13]] << 2 | v[b[14]])
-        i3 = (v[b[15]] << 8 | v[b[16]] << 6 | v[b[17]] << 4 |
-              v[b[18]] << 2 | v[b[19]])
-        i4 = (v[b[20]] << 8 | v[b[21]] << 6 | v[b[22]] << 4 |
-              v[b[23]] << 2 | v[b[24]])
-        last = v[b[25]]
-        return (_5MER_ENC[i0] << 42 |
-                _5MER_ENC[i1] << 32 |
-                _5MER_ENC[i2] << 22 |
-                _5MER_ENC[i3] << 12 |
-                _5MER_ENC[i4] << 2  |
-                last)
-    elif n == 19:
-        i0 = (v[b[0]]  << 8 | v[b[1]]  << 6 | v[b[2]]  << 4 |
-              v[b[3]]  << 2 | v[b[4]])
-        i1 = (v[b[5]]  << 8 | v[b[6]]  << 6 | v[b[7]]  << 4 |
-              v[b[8]]  << 2 | v[b[9]])
-        i2 = (v[b[10]] << 8 | v[b[11]] << 6 | v[b[12]] << 4 |
-              v[b[13]] << 2 | v[b[14]])
-        last4 = (v[b[15]] << 6 | v[b[16]] << 4 | v[b[17]] << 2 | v[b[18]])
-        return (_5MER_ENC[i0] << 28 |
-                _5MER_ENC[i1] << 18 |
-                _5MER_ENC[i2] << 8  |
-                last4)
-    else:
-        raise ValueError(f"Unsupported window size: {n}")
+    val = 0
+    i = 0
+    while i + 5 <= n:
+        chunk = (v[b[i]]   << 8 | v[b[i+1]] << 6 | v[b[i+2]] << 4 |
+                 v[b[i+3]] << 2 | v[b[i+4]])
+        val = (val << 10) | _5MER_ENC[chunk]
+        i += 5
+    while i < n:
+        val = (val << 2) | v[b[i]]
+        i += 1
+    return val
 
 
-def extract_guides_from_bigint(big_int: int, guide_len: int = 20) -> list:
+def extract_guides_from_bigint(big_int: int, guide_len: int, window_len: int) -> list:
     """Extract sliding guide codes from a window int via shift+mask.
 
+    window_len - guide_len + 1 candidate offsets are produced, each a
+    guide_len-base substring of the window starting at `offset` bases from
+    the left (offset=0 is the leftmost/most-significant substring).
+
     For 20bp guide in 26bp window (10xv3): offset=0..6, 7 guides.
-    For 19bp guide in 19bp window (10xv2-5p): offset=0 only, 1 guide.
+    For 19bp guide in 19bp window (10xv2-5p, no margin): offset=0 only.
     """
-    n_offsets = 7 if guide_len == 20 else 1
+    n_offsets = window_len - guide_len + 1
     mask = (1 << (guide_len * 2)) - 1
     guides = []
     for offset in range(n_offsets):
-        shift = ((n_offsets + guide_len - 1 - offset) * 2) if guide_len == 20 else 0
+        shift = (window_len - guide_len - offset) * 2
         guides.append((big_int >> shift) & mask)
     return guides
 
