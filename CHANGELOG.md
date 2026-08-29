@@ -47,6 +47,16 @@
   `ValueError` instead of silently producing misaligned or truncated hits.
 - `hits` array in the match stage now grows by amortized doubling instead
   of a hardcoded 30,000,000-row cap.
+- Named-chemistry field override: `chem_cfg` (CLI: `--cb-start`/`--cb-end`/
+  `--umi-start`/`--umi-end`/`--window-start`/`--window-end`/`--guide-len`)
+  can now be passed alongside a *named* chemistry (not just `custom`) to
+  override individual fields on top of that chemistry's preset — e.g.
+  `--chemistry 10xv2-5p --guide-len 19` for a guide library whose actual
+  protospacer length differs from the 20bp default without having to
+  respecify every other position via `custom`. Previously these flags were
+  silently ignored unless `--chemistry custom` was set. `custom` itself is
+  unchanged: it still requires all 7 keys, since there's no preset to fall
+  back on.
 
 ### Internal
 - `multiprocessing.set_start_method('fork', force=True)` (a process-wide

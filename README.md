@@ -81,7 +81,15 @@ ham match ... --chemistry 10xv3            # 3' v3/v4, 3LT, multiome
 ham match ... --chemistry 10xv2-5p         # 5' v1/v2
 ham match ... --chemistry 10xv2-5p-12umi   # 5' v3 (GEM-X)
 
-# Custom chemistry — pass each position explicitly
+# Override a single field on a named chemistry — anything you don't pass
+# keeps that chemistry's own default. Useful for a guide library whose
+# protospacer length genuinely differs from the 20bp default (e.g. a
+# library designed with 19bp guides) without having to respecify every
+# other position by hand:
+ham match ... --chemistry 10xv2-5p --guide-len 19
+
+# Custom chemistry — no preset to fall back on, so all 7 positions are
+# required
 ham match ... --chemistry custom \
     --cb-start 0 --cb-end 14 \
     --umi-start 14 --umi-end 22 \
@@ -110,7 +118,16 @@ match_reads("lane01_R1.fastq.gz", "lane01_R2.fastq.gz",
             output_path="hits.npz", threads=4, chemistry="10xv3")
 build_count_matrix("hits.npz", "mex_output/", umi_len=12)
 
-# Custom chemistry
+# Named chemistry with a single field overridden — anything not in
+# chem_cfg keeps that chemistry's own default (cb/umi/window positions
+# here; only guide_len is overridden)
+match_reads("lane01_R1.fastq.gz", "lane01_R2.fastq.gz",
+            whitelist=whitelist, guide_hash=guide_hash,
+            output_path="hits.npz", threads=4,
+            chemistry="10xv2-5p", chem_cfg={"guide_len": 19})
+build_count_matrix("hits.npz", "mex_output/", umi_len=10)
+
+# Custom chemistry — no preset, chem_cfg must supply all 7 keys
 match_reads("lane01_R1.fastq.gz", "lane01_R2.fastq.gz",
             whitelist=whitelist, guide_hash=guide_hash,
             output_path="hits.npz", threads=4,
@@ -335,14 +352,18 @@ ham match           Match sgRNA reads to guide reference
   --cb-max-hamming N  Max Hamming distance for CB correction [default: 1]
   --chemistry NAME    10x chemistry: 10xv3, 10xv2-5p, or custom [default: 10xv3]
 
-  # Custom chemistry flags (used with --chemistry custom):
-  --cb-start N        CB start position in R1 [default: 0]
-  --cb-end N          CB end position in R1 [default: 16]
-  --umi-start N       UMI start position in R1 [default: 16]
-  --umi-end N         UMI end position in R1 [default: 28]
-  --window-start N    Guide window start in R2 [default: 28]
-  --window-end N      Guide window end in R2 [default: 54]
-  --guide-len N       Guide protospacer length in bp [default: 20]
+  # Position-override flags: required (all 7) with --chemistry custom;
+  # with a named chemistry, any of these you pass overrides just that
+  # field on top of the named preset (e.g. --guide-len 19 on 10xv2-5p for
+  # a non-standard guide length) — anything you don't pass keeps that
+  # chemistry's own default.
+  --cb-start N        CB start position in R1
+  --cb-end N          CB end position in R1
+  --umi-start N       UMI start position in R1
+  --umi-end N         UMI end position in R1
+  --window-start N    Guide window start in R2
+  --window-end N      Guide window end in R2
+  --guide-len N       Guide protospacer length in bp
 
 ham dedup           UMI deduplication + MEX matrix generation
   -i, --input PATH    Hits file (.npz) from ham match

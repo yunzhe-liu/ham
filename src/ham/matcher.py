@@ -346,8 +346,16 @@ def match_reads(
 ) -> dict:
     """Core matching loop (HAM: integer encoding + numpy + multi-process I/O).
 
-    When chemistry="custom", chem_cfg must be provided with keys:
-    cb_start, cb_end, umi_start, umi_end, window_start, window_end, guide_len.
+    When chemistry="custom", chem_cfg must be a dict with every key: cb_start,
+    cb_end, umi_start, umi_end, window_start, window_end, guide_len — there is
+    no preset to fall back on.
+
+    When chemistry is a named chemistry (10xv3, 10xv2-5p, 10xv2-5p-12umi),
+    chem_cfg is optional and, if given, only needs to contain the specific
+    keys you want to override on top of that chemistry's preset (e.g.
+    chem_cfg={"guide_len": 19} to use a non-standard guide length with an
+    otherwise-standard 10xv2-5p layout). Any key not present in chem_cfg
+    keeps the named chemistry's default value.
     """
     if chemistry == "custom":
         if not chem_cfg:
@@ -356,8 +364,20 @@ def match_reads(
                 "cb_start, cb_end, umi_start, umi_end, "
                 "window_start, window_end, guide_len")
     else:
-        chem_cfg = CHEMISTRY_CONFIGS.get(
-            chemistry, CHEMISTRY_CONFIGS[DEFAULT_CHEMISTRY])
+        base_cfg = dict(CHEMISTRY_CONFIGS.get(
+            chemistry, CHEMISTRY_CONFIGS[DEFAULT_CHEMISTRY]))
+        if chem_cfg:
+            overrides = {k: v for k, v in chem_cfg.items() if k in _CHEM_CFG_KEYS}
+            unknown = set(chem_cfg) - set(_CHEM_CFG_KEYS)
+            if unknown:
+                raise ValueError(
+                    f"chemistry={chemistry!r}: chem_cfg has unknown keys {sorted(unknown)}; "
+                    f"valid override keys are {list(_CHEM_CFG_KEYS)}")
+            if overrides:
+                print(f"Note: overriding {chemistry!r} defaults for: "
+                      f"{ {k: (base_cfg.get(k), v) for k, v in overrides.items()} }")
+            base_cfg.update(overrides)
+        chem_cfg = base_cfg
     _validate_chem_cfg(chem_cfg, source=f"chemistry={chemistry!r}")
 
     guide_length = guide_hash.get('guide_length')

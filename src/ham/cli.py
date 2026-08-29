@@ -19,18 +19,26 @@ def cmd_match(args):
     wl = load_whitelist(args.whitelist)
     gh = load_guide_hash(args.guide_hash)
 
-    # Build custom chem_cfg kwargs when --chemistry custom
+    # Only pass along position flags the user actually set (they default to
+    # None). For --chemistry custom this must cover all 7 keys (match_reads
+    # raises a clear error if any are missing). For a named chemistry this
+    # is an optional partial override on top of that chemistry's preset.
+    explicit_positions = {
+        "cb_start": args.cb_start,
+        "cb_end": args.cb_end,
+        "umi_start": args.umi_start,
+        "umi_end": args.umi_end,
+        "window_start": args.window_start,
+        "window_end": args.window_end,
+        "guide_len": args.guide_len,
+    }
+    chem_cfg = {k: v for k, v in explicit_positions.items() if v is not None}
+
     match_kwargs = {}
     if args.chemistry == "custom":
-        match_kwargs["chem_cfg"] = {
-            "cb_start": args.cb_start,
-            "cb_end": args.cb_end,
-            "umi_start": args.umi_start,
-            "umi_end": args.umi_end,
-            "window_start": args.window_start,
-            "window_end": args.window_end,
-            "guide_len": args.guide_len,
-        }
+        match_kwargs["chem_cfg"] = chem_cfg
+    elif chem_cfg:
+        match_kwargs["chem_cfg"] = chem_cfg
 
     match_reads(
         r1_path=args.read1,
@@ -107,23 +115,38 @@ def main():
                          help='10x chemistry: 10xv3 (3-prime, 12bp UMI), '
                               '10xv2-5p (5-prime v1/v2, 10bp UMI), '
                               '10xv2-5p-12umi (5-prime v3 GEM-X, 12bp UMI), '
-                              'or custom (use --cb-start/--umi-start/etc.) '
+                              'or custom (requires all of --cb-start/--cb-end/'
+                              '--umi-start/--umi-end/--window-start/'
+                              '--window-end/--guide-len) '
                               '[default: 10xv3]')
-    # Custom chemistry flags (used when --chemistry custom)
-    p_match.add_argument('--cb-start', type=int, default=0,
-                         help='CB start position in R1 [default: 0]')
-    p_match.add_argument('--cb-end', type=int, default=16,
-                         help='CB end position in R1 [default: 16]')
-    p_match.add_argument('--umi-start', type=int, default=16,
-                         help='UMI start position in R1 [default: 16]')
-    p_match.add_argument('--umi-end', type=int, default=28,
-                         help='UMI end position in R1 [default: 28]')
-    p_match.add_argument('--window-start', type=int, default=28,
-                         help='Guide window start in R2 [default: 28]')
-    p_match.add_argument('--window-end', type=int, default=54,
-                         help='Guide window end in R2 [default: 54]')
-    p_match.add_argument('--guide-len', type=int, default=20,
-                         help='Guide protospacer length in bp [default: 20]')
+    # Position-override flags. With --chemistry custom, ALL of these are
+    # required (no preset to fall back on). With a named chemistry, any of
+    # these you pass explicitly overrides just that field on top of the
+    # named preset (e.g. --chemistry 10xv2-5p --guide-len 19 for a
+    # non-standard guide length with an otherwise-standard 5' layout);
+    # anything you don't pass keeps the named chemistry's default.
+    p_match.add_argument('--cb-start', type=int, default=None,
+                         help='CB start position in R1 (required for custom; '
+                              'overrides the named chemistry default otherwise)')
+    p_match.add_argument('--cb-end', type=int, default=None,
+                         help='CB end position in R1 (required for custom; '
+                              'overrides the named chemistry default otherwise)')
+    p_match.add_argument('--umi-start', type=int, default=None,
+                         help='UMI start position in R1 (required for custom; '
+                              'overrides the named chemistry default otherwise)')
+    p_match.add_argument('--umi-end', type=int, default=None,
+                         help='UMI end position in R1 (required for custom; '
+                              'overrides the named chemistry default otherwise)')
+    p_match.add_argument('--window-start', type=int, default=None,
+                         help='Guide window start in R2 (required for custom; '
+                              'overrides the named chemistry default otherwise)')
+    p_match.add_argument('--window-end', type=int, default=None,
+                         help='Guide window end in R2 (required for custom; '
+                              'overrides the named chemistry default otherwise)')
+    p_match.add_argument('--guide-len', type=int, default=None,
+                         help='Guide protospacer length in bp (required for '
+                              'custom; overrides the named chemistry default '
+                              'otherwise)')
     p_match.set_defaults(func=cmd_match)
 
     # ── dedup ──
