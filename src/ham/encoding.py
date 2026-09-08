@@ -129,7 +129,7 @@ def extract_guides_from_bigint(big_int: int, guide_len: int, window_len: int) ->
     return guides
 
 
-def generate_cb_variants(bc: str, max_hamming: int = 2):
+def generate_cb_variants(bc: str, max_hamming: int = 1):
     """Generate all Hamming <= max_hamming variants of a 16bp barcode.
 
     Yields (variant_str, hamming_distance).

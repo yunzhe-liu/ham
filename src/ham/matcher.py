@@ -93,7 +93,7 @@ def load_guide_hash(path: str) -> dict:
 
 
 def build_cb_hash(whitelist: set, low_memory: bool = False,
-                  cb_max_hamming: int = 2) -> dict:
+                  cb_max_hamming: int = 1) -> dict:
     """Build compact CB correction hash table.
 
     Plan H (default, low_memory=False): Python dict[int→int], O(1) lookup, ~700 MB.
@@ -108,7 +108,7 @@ def build_cb_hash(whitelist: set, low_memory: bool = False,
     return _build_cb_hash_dict(whitelist, cb_max_hamming)
 
 
-def _build_cb_hash_dict(whitelist: set, cb_max_hamming: int = 2) -> dict:
+def _build_cb_hash_dict(whitelist: set, cb_max_hamming: int = 1) -> dict:
     """Plan H: Python int dict for O(1) CB lookup."""
     t0 = time.time()
     barcode_list = list(whitelist)
@@ -134,7 +134,7 @@ def _build_cb_hash_dict(whitelist: set, cb_max_hamming: int = 2) -> dict:
     return {'cb_mode': 'dict', 'cb_map': cb_map, 'barcode_list': barcode_list}
 
 
-def _build_cb_hash_numpy(whitelist: set, cb_max_hamming: int = 2) -> dict:
+def _build_cb_hash_numpy(whitelist: set, cb_max_hamming: int = 1) -> dict:
     """Plan G: sorted numpy int32 arrays + binary search for low-memory CB lookup.
 
     Stores encoded CB variants and parent indices as two parallel sorted
@@ -339,7 +339,7 @@ def match_reads(
     max_reads: Optional[int] = None,
     threads: int = 1,
     low_memory: bool = False,
-    cb_max_hamming: int = 2,
+    cb_max_hamming: int = 1,
     chemistry: str = "10xv3",
     report_interval: int = 1_000_000,
     chem_cfg: Optional[dict] = None,

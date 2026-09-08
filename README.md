@@ -182,10 +182,10 @@ The algorithm is built on three core ideas:
    physically constrained to the guide region.
 
 3. **Pre-computed hash tables with Hamming=1 expansion** — Both the guide
-   hash table and the cell barcode whitelist are pre-expanded to include all
-   valid Hamming-distance-1 neighbours. During matching, a single O(1) hash
-   lookup finds the parent guide or barcode — no iterative alignment, no
-   scoring matrices, no seeding-and-extending.
+   hash table and, by default, the cell barcode whitelist are pre-expanded to
+   include all valid Hamming-distance-1 neighbours. During matching, a single
+   O(1) hash lookup finds the parent guide or barcode — no iterative alignment,
+   no scoring matrices, no seeding-and-extending.
 
 ### Stage 0: `build-hash` — Guide Hash Table Construction
 
@@ -225,16 +225,16 @@ guide hash table.
 encoding via pre-computed 256-entry lookup tables (`_BYTE2BITS`). This avoids
 string construction at every step.
 
-**Step 1b — Cell Barcode Correction (Hamming ≤ 1):** The 10x barcode whitelist
-is pre-expanded into a CB hash table containing all valid barcodes plus all
-their Hamming-distance-1 variants. Two modes:
+**Step 1b — Cell Barcode Correction (Hamming ≤ 1 by default):** The 10x
+barcode whitelist is pre-expanded into a CB hash table containing all valid
+barcodes plus their Hamming-distance-1 variants. Two modes:
 - **Plan H (default, dict):** O(1) lookup, ~700 MB. Production use.
 - **Plan G (low-memory):** Sorted numpy arrays + binary search. O(log N)
   lookup, ~110 MB.
 
-Reads with barcodes not found in the hash are discarded. Use
-`--cb-max-hamming 2` for chemistry mismatches (e.g. Nextera-formatted
-barcodes against a TruSeq whitelist).
+Reads with barcodes not found in the hash are discarded. The CLI and Python API
+both default to `--cb-max-hamming 1`. Set `--cb-max-hamming 2` explicitly only
+when a known barcode-format or chemistry mismatch requires the wider tolerance.
 
 **Step 1c — UMI Encoding:** The UMI region (12 bp at R1[16:28] for `10xv3`;
 10 bp at R1[16:26] for `10xv2-5p`; user-specified for `custom`) is encoded
